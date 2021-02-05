@@ -15,8 +15,11 @@
 #include "include/dbg.h"
 #include "include/cvector.h"
 
-static pthread_rwlock_t	g_rwlock;	
-
+/**
+ * @brief print_client - A way to print client in vec.
+ * @param v - normally v is an dynamic array  
+ * @return void 
+ */
 static void print_client(s_client **v)
 {
         if (v) {
@@ -44,7 +47,6 @@ static void print_client(s_client **v)
 static bool binary_search(void **vec, int l, int *index, void *e, int (*cmp)(void *x, char *y)) 
 { 
 
-	// pthread_rwlock_wrlock(&(g_rwlock));
         int r = cvector_size(vec) - 1;
         int m = 0;
 
@@ -61,12 +63,6 @@ static bool binary_search(void **vec, int l, int *index, void *e, int (*cmp)(voi
 
         while (l <= r) { 
                 m = l + (r - l) / 2; 
-                log("m: %d", m);
-
-                if (vec[m] == NULL) {
-                        log("FUCK:vec_size: %ld", cvector_size(vec));
-                        log("FUCK:vec addr: %p", vec[0]);
-                }
 
                 // Check if x is present at mid 
                 if (cmp(vec[m], e) == 0) {
@@ -90,10 +86,7 @@ static bool binary_search(void **vec, int l, int *index, void *e, int (*cmp)(voi
 
         // if we reach here, then element was 
         // not present 
-        log("FUCK I AM HERE");
         *index = m + add;
-        log("FUCK I AM HERE");
-	// pthread_rwlock_unlock(&(g_rwlock));
         return false; 
 } 
 
@@ -247,6 +240,11 @@ void print_db_tree(db_tree *db)
 }
 #endif
 
+/**
+ * @brief advance - To get level boundry of binary search
+ * @param node - db_node
+ * @return l - level boundry
+ */
 static int advance(db_node *node)
 {
         int l = 0;
@@ -390,7 +388,6 @@ void create_db_tree(db_tree **db)
         db_node *node = new_db_node("\0");
         (*db)->root = node;
         pthread_rwlock_init (&((*db)->rwlock),NULL);
-        pthread_rwlock_init (&(g_rwlock),NULL);
         return;
 }
 
@@ -420,20 +417,17 @@ void destory_db_tree(db_tree *db)
 static int insert_db_client(db_node *node, s_client *client)
 {
 	pthread_rwlock_wrlock(&(node->rwlock));
-        // s_client *client_ = (s_client*) zmalloc(sizeof(s_client));
-        // memcpy(client_, client, sizeof(s_client));
-
-        // TODO maybe encounter some questions
-        // no malloc for client->id;
 
         int index = 0;
 
-        if (false == binary_search((void**)node->clients, 0, &index, client, client_cmp)) {
+        if (false == binary_search((void**)node->clients, 0, &index, client->id, client_cmp)) {
                 if (index == cvector_size(node->clients)) {
                         cvector_push_back(node->clients, client);
                 } else {
                         cvector_insert(node->clients, index, client);
                 }
+        } else {
+                db_client_free(client);
         }
 
         pthread_rwlock_unlock(&(node->rwlock));
@@ -478,7 +472,6 @@ static void insert_db_node(db_node *node, char **topic_queue, s_client *client)
 {
         assert(node && topic_queue && client);
 
-	// pthread_rwlock_wrlock(&(node->rwlock));
         while (*topic_queue) {
                 db_node *new_node = NULL;
 
@@ -540,7 +533,7 @@ static void insert_db_node(db_node *node, char **topic_queue, s_client *client)
                 log("client id: %s", node->clients[0]->id);
 
         }
-	// pthread_rwlock_wrlock(&(node->rwlock));
+
         return;
 }
 
@@ -549,18 +542,20 @@ static void insert_db_node(db_node *node, char **topic_queue, s_client *client)
  * @param node - db_node
  * @param topic_queue - topic queue
  * @param client - client
- * @return if yes, node ==>> child and return node
- * if no, call insert_node and return NULL
+ * @return void
  */
-static db_node *check_and_insert(db_node *node, char **topic_queue, s_client *client)
+static void check_and_insert(db_node *node, char **topic_queue, s_client *client)
 {
-        if (node->child && *node->child) {
-                node = *node->child;
-        } else {
+        if (!(node->child && *node->child)) {
                 insert_db_node(node, topic_queue, client);
-                return NULL;
         }
-        return node;
+        // if (node->child && *node->child) {
+        //         node = *node->child;
+        // } else {
+        //         insert_db_node(node, topic_queue, client);
+        //         return NULL;
+        // }
+        // return node;
 
 }
 
@@ -577,8 +572,8 @@ static db_node *check_and_insert(db_node *node, char **topic_queue, s_client *cl
 // int search_and_insert(db_tree *db, char *topic, s_client *client)
 int search_and_insert(db_tree *db, char *topic, char *id, void *ctxt)
 {
-	pthread_rwlock_wrlock(&(db->rwlock));
         assert(db->root && topic && id);
+	pthread_rwlock_wrlock(&(db->rwlock));
 
         s_client *client = new_db_client(id, ctxt);
         char **topic_queue = topic_parse(topic);
@@ -611,7 +606,6 @@ int search_and_insert(db_tree *db, char *topic, char *id, void *ctxt)
                 if (node_t->child && *node_t->child && *(topic_queue+1)) {
                         topic_queue++;
                         node = node_t;
-                        // node = *node->child;
                 } else if (*(topic_queue+1) == NULL) {
                         log("Search and insert client");
                         insert_db_client(node_t, client);
@@ -623,7 +617,7 @@ int search_and_insert(db_tree *db, char *topic, char *id, void *ctxt)
                 }
         }
 
-        node = check_and_insert(node, topic_queue, client);
+        check_and_insert(node, topic_queue, client);
 	pthread_rwlock_unlock(&(db->rwlock));
         topic_queue_free(for_free); 
         return 0;
@@ -752,8 +746,7 @@ static void **iterate_client(s_client ***v)
 
                                 log("client id: %s", v[i][j]->id);
                         }
-                }
-
+                } 
                 cvector_free(ids);
 
 	}
@@ -769,20 +762,17 @@ static void **iterate_client(s_client ***v)
  */
 void **search_client(db_tree *db, char *topic)
 {
-	// pthread_rwlock_rdlock(&(db->rwlock));
         assert(db && topic);
+	pthread_rwlock_rdlock(&(db->rwlock));
         log("______FUCK______");
         char **topic_queue = topic_parse(topic);
         char **for_free = topic_queue;
 
         db_node *node = db->root;
-        cvector(s_client**) clients_all = NULL;
+        cvector(s_client**) ctxts = NULL;
         cvector(db_node*)  nodes = NULL;
         cvector(db_node*)  nodes_t = NULL;
 
-
-        
-	// pthread_rwlock_rdlock(&(node->rwlock));
         if (node->child && *node->child) {
                 cvector_push_back(nodes, node);
         }
@@ -791,18 +781,21 @@ void **search_client(db_tree *db, char *topic)
 
         while (*topic_queue && (!cvector_empty(nodes))) {
 
-                clients_all = collect_clients(clients_all, nodes, &nodes_t, topic_queue);
+                ctxts = collect_clients(ctxts, nodes, &nodes_t, topic_queue);
                 topic_queue++;
-                clients_all = collect_clients(clients_all, nodes_t, &nodes, topic_queue);
+                ctxts = collect_clients(ctxts, nodes_t, &nodes, topic_queue);
                 topic_queue++;
 
         }
-        void **ret = iterate_client(clients_all);
+
+        void **ret = iterate_client(ctxts);
+	pthread_rwlock_unlock(&(db->rwlock));
+
         topic_queue_free(for_free); 
         cvector_free(nodes);
         cvector_free(nodes_t);
+        cvector_free(ctxts);
 
-	// pthread_rwlock_unlock(&(db->rwlock));
         return ret;
 }
 
@@ -813,16 +806,15 @@ void **search_client(db_tree *db, char *topic)
  * @param client - client
  * @return 
  */
-static void *delete_db_client(db_node *node, s_client *client)
+static void *delete_db_client(db_node *node, char *id)
 {
-	pthread_rwlock_wrlock(&(node->rwlock));
         int index = 0;
         void * ctxt = NULL;
-        // puts("FFF");
 
+	pthread_rwlock_wrlock(&(node->rwlock));
         // TODO maybe ctxt need to be protected
         print_client(node->clients);
-        if (true == binary_search((void**)node->clients, 0, &index, client, client_cmp)) {
+        if (true == binary_search((void**)node->clients, 0, &index, id, client_cmp)) {
                 s_client *c = node->clients[index];
                 cvector_erase(node->clients, index);
                 print_client(node->clients);
@@ -840,8 +832,6 @@ static void *delete_db_client(db_node *node, s_client *client)
 
         }
 	pthread_rwlock_unlock(&(node->rwlock));
-
-        // puts("iiiFFF");
         return ctxt;
 }
                 
@@ -857,8 +847,6 @@ static int delete_db_node(db_node *node, int index)
         db_node *node_t = node->child[index];
         log("index: %d, node: %s", index, node_t->topic);
         // TODO plus && well
-
-        
 
 
         if (cvector_empty(node_t->child) &&  cvector_empty(node_t->clients)) {
@@ -894,10 +882,10 @@ static int delete_db_node(db_node *node, int index)
         }
 
         if (cvector_empty(node->child)) {
-                log("DDDDDD");
                 cvector_free(node->child);
                 node->child = NULL;
         }
+
 	pthread_rwlock_unlock(&(node->rwlock));
 
         return 0;
@@ -911,27 +899,28 @@ static int delete_db_node(db_node *node, int index)
  * @param db - db_node
  * @param topic - topic
  * @param client - client
- * @return 
+ * @return ctxt or NULL, if client can be delete or not 
  */
-void *search_and_delete(db_tree *db, char *topic, s_client *client)
+// void *search_and_delete(db_tree *db, char *topic, s_client *client)
+void *search_and_delete(db_tree *db, char *topic, char *id)
 {
+        assert(db->root && topic && id);
 	pthread_rwlock_wrlock(&(db->rwlock));
-        assert(db->root && topic && client);
 
         char **topic_queue = topic_parse(topic);
         char **for_free = topic_queue; 
+        db_node *node = db->root;
         db_node **node_buf = NULL;
+        void * ctxt = NULL;
         int *vec = NULL;
         int index = 0;
-        db_node *node = db->root;
         
         while (*topic_queue && node->child && *node->child) {
+                index = 0;
                 db_node *node_t = *node->child;
                 log("topic is: %s, node->topic is: %s", *topic_queue, node_t->topic);
-                index = 0;
                 if (strcmp(node_t->topic, *topic_queue)) { 
                         bool equal = false;
-                        // TODO find_hash/plus
                         if (is_well(*topic_queue) && (node->well != -1)) {
                                 index = node->well;
                                 equal = true;
@@ -946,20 +935,11 @@ void *search_and_delete(db_tree *db, char *topic, s_client *client)
                         node_t = node->child[index];
 
                         if (equal == false) {
-
                                 // TODO node_t or node->child[index], to determine if node_t is needed
                                 node_t = find_next(node, &equal, topic_queue, &index);
                                 if (equal == false) {
-                                        /* 
-                                         ** If no node is matched with topic
-                                         ** insert node until topic_queue 
-                                         ** is NULL
-                                         */
                                         log("searching unequal");
-                                        topic_queue_free(for_free); 
-                                        cvector_free(node_buf);
-                                        cvector_free(vec);
-                                        return 0;
+                                        goto mem_free;
                                 } 
                         }
                 }
@@ -969,37 +949,27 @@ void *search_and_delete(db_tree *db, char *topic, s_client *client)
                         topic_queue++;
                         cvector_push_back(node_buf, node); 
                         cvector_push_back(vec, index); 
-                        // TODO
                         node = node_t;
                         
 
                 } else if (*(topic_queue+1) == NULL) {
                         log("Search and delete client");
                         log("node->topic: %s", node->topic);
-                        // node = node_t;
-                        // delete_db_client(node_t, client);
                         break;
                 } else {
                         log("No node and client need to be delete");
-                        cvector_free(node_buf);
-                        topic_queue_free(for_free); 
-                        cvector_free(vec);
-                        return 0;
+                        goto mem_free;
                 }
         }
 
-        log("FUCK");
-        void * ctxt = NULL;
         if (node->child) {
-                ctxt = delete_db_client(node->child[index], client);
-                print_client(node->child[index]->clients);
-                // void *ctxt = NULL; //delete_db_client(node->child[index], client);
-                log("FUCK");
+                ctxt = delete_db_client(node->child[index], id);
+                // print_client(node->child[index]->clients);
                 delete_db_node(node, index);
                 // print_client(node->child[index]->clients);
         }
 
-        print_db_tree(db);
+        // print_db_tree(db);
 
         while (!cvector_empty(node_buf) && !cvector_empty(vec)) {
                 db_node *t = *(cvector_end(node_buf)-1);
@@ -1008,16 +978,17 @@ void *search_and_delete(db_tree *db, char *topic, s_client *client)
                 cvector_pop_back(vec);
 
                 delete_db_node(t, i);
-                print_db_tree(db);
+                // print_db_tree(db);
         }
 
+	pthread_rwlock_unlock(&(db->rwlock));
+
         
-        // TODO 内存释放
+mem_free:
         cvector_free(node_buf);
         topic_queue_free(for_free); 
         cvector_free(vec);
-	pthread_rwlock_unlock(&(db->rwlock));
-        log("I am here");
+
         return ctxt;
 }
 
@@ -1028,11 +999,8 @@ void insert_retain(db_tree *db, char *topic)
 
 }
 
-
 void search_retain(db_tree *db, char *topic)
 {
-
-
 
 }
 

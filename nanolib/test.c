@@ -117,25 +117,25 @@ static void test_insert()
 static void test_delete()
 {
         puts("================begin delete===============");
-        search_and_delete(db, topic0, &client0);
+        search_and_delete(db, topic0, client0.id);
         print_db_tree(db);
-        search_and_delete(db, topic1, &client1);
+        search_and_delete(db, topic1, client1.id);
         print_db_tree(db);
-        search_and_delete(db, topic2, &client2);
+        search_and_delete(db, topic2, client2.id);
         print_db_tree(db);
-        search_and_delete(db, topic3, &client3);
+        search_and_delete(db, topic3, client3.id);
         print_db_tree(db);
-        search_and_delete(db, topic4, &client4);
+        search_and_delete(db, topic4, client4.id);
         print_db_tree(db);
-        search_and_delete(db, topic5, &client5);
+        search_and_delete(db, topic5, client5.id);
         print_db_tree(db);
-        search_and_delete(db, topic6, &client6);
+        search_and_delete(db, topic6, client6.id);
         print_db_tree(db);
-        search_and_delete(db, topic7, &client7);
+        search_and_delete(db, topic7, client7.id);
         print_db_tree(db);
-        search_and_delete(db, topic8, &client8);
+        search_and_delete(db, topic8, client8.id);
         print_db_tree(db);
-        search_and_delete(db, topic9, &client9);
+        search_and_delete(db, topic9, client9.id);
         print_db_tree(db);
 }
 
@@ -169,14 +169,13 @@ static void *test_unique(void *t)
 {
         s_client *c = (s_client*)t;
 
-        for (int i = 0; i < 10000; i++) {
-                // search_and_insert(db, topic0, c);
-                // search_and_insert(db, topic0, c);
+        for (int i = 0; i < 100; i++) {
                 search_and_insert(db, topic0, c->id, NULL);
-                // cvector(s_client*) v =  NULL;
-                // v = search_client(db, topic0);
-                // print_db_tree(db);
-                search_and_delete(db, topic0, c);
+                cvector(s_client*) v =  NULL;
+                v = search_client(db, topic0);
+                cvector_free(v);
+                print_db_tree(db);
+                search_and_delete(db, topic0, c->id);
         }
         pthread_exit(NULL);
 }
@@ -217,9 +216,14 @@ int main(int argc, char *argv[])
 
         create_db_tree(&db);
 
-
-        test_concurrent();
         test_insert();
+        test_concurrent();
+
+        for (int i = 0; i < 10; i++) {
+                cvector(s_client*) v =  NULL;
+                v = search_client(db, topic0);
+                cvector_free(v);
+        }
         test_delete();
         // test_search_client();
         

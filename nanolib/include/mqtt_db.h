@@ -62,9 +62,8 @@ static inline int node_cmp(void *x, char *y)
 static inline int client_cmp(void *x, char *y)
 {
         s_client *ele_x = (s_client*) x;
-        s_client *ele_y = (s_client*) y;
         // printf("\ncompare: %s, %s\n", ele_x->id, ele_y->id);
-        return strcmp(ele_x->id, ele_y->id);
+        return strcmp(ele_x->id, y);
 }
 
 /* Create a db_tree */
@@ -78,7 +77,7 @@ void print_db_tree(db_tree *db);
 int search_and_insert(db_tree *db, char *topic, char *id, void *ctxt);
 // int search_and_insert(db_tree *db, char *topic, s_client *client);
 
-void *search_and_delete(db_tree *db, char *topic, s_client *client);
+void *search_and_delete(db_tree *db, char *topic, char *id);
 // void *search_and_delete(db_tree *db, char *topic, s_client *client);
 
 void **search_client(db_tree *db, char *topic);
