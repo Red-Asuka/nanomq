@@ -15,7 +15,9 @@
 struct nni_aio_expire_q {
 	nni_mtx  eq_mtx;
 	nni_cv   eq_cv;
-	nni_list eq_list;
+	nni_aio **eq_list;
+	uint32_t eq_len;
+	uint32_t eq_sz;
 	nni_aio *eq_aio; // currently expiring (task dispatch)
 	nni_thr  eq_thr;
 	bool     eq_exit;
@@ -99,6 +101,7 @@ static nni_reap_list aio_reap_list = {
 };
 
 static void nni_aio_expire_add(nni_aio *);
+static void nni_aio_expire_rm(nni_aio_expire_q *, nni_aio *);
 
 void
 nni_aio_init(nni_aio *aio, nni_cb cb, void *arg)
@@ -128,7 +131,9 @@ nni_aio_fini(nni_aio *aio)
 	// We also wait if the aio is being expired.
 	nni_mtx_lock(&eq->eq_mtx);
 	aio->a_stop = true;
-	nni_list_node_remove(&aio->a_expire_node);
+	// nni_list_node_remove(&aio->a_expire_node);
+	nni_aio_expire_rm(eq, aio);
+
 	while (eq->eq_aio == aio) {
 		nni_cv_wait(&eq->eq_cv);
 	}
@@ -209,7 +214,9 @@ nni_aio_stop(nni_aio *aio)
 		nni_aio_expire_q *eq = aio->a_expire_q;
 
 		nni_mtx_lock(&eq->eq_mtx);
-		nni_list_node_remove(&aio->a_expire_node);
+		// nni_list_node_remove(&aio->a_expire_node);
+		nni_aio_expire_rm(eq, aio);
+
 		fn                = aio->a_cancel_fn;
 		arg               = aio->a_cancel_arg;
 		aio->a_cancel_fn  = NULL;
@@ -225,6 +232,20 @@ nni_aio_stop(nni_aio *aio)
 	}
 }
 
+static void nni_aio_expire_rm(nni_aio_expire_q * eq, nni_aio * aio)
+{
+	uint32_t aio_index = 0;
+	for (aio_index=0; aio_index < eq->eq_len; aio_index ++) {
+		if (aio == eq->eq_list[aio_index]) {
+			eq->eq_len --;
+			break;
+		}
+	}
+	for (uint32_t i=aio_index+1; i<eq->eq_len; i++) {
+		eq->eq_list[i-1] = eq->eq_list[i];
+	}
+}
+
 void
 nni_aio_close(nni_aio *aio)
 {
@@ -234,7 +255,9 @@ nni_aio_close(nni_aio *aio)
 		nni_aio_expire_q *eq = aio->a_expire_q;
 
 		nni_mtx_lock(&eq->eq_mtx);
-		nni_list_node_remove(&aio->a_expire_node);
+		// nni_list_node_remove(&aio->a_expire_node);
+		nni_aio_expire_rm(eq, aio);
+
 		fn                = aio->a_cancel_fn;
 		arg               = aio->a_cancel_arg;
 		aio->a_cancel_fn  = NULL;
@@ -422,7 +445,9 @@ nni_aio_abort(nni_aio *aio, int rv)
 	nni_aio_expire_q *eq = aio->a_expire_q;
 
 	nni_mtx_lock(&eq->eq_mtx);
-	nni_list_node_remove(&aio->a_expire_node);
+	// nni_list_node_remove(&aio->a_expire_node);
+	nni_aio_expire_rm(eq, aio);
+
 	fn                = aio->a_cancel_fn;
 	arg               = aio->a_cancel_arg;
 	aio->a_cancel_fn  = NULL;
@@ -445,7 +470,9 @@ nni_aio_finish_impl(
 
 	nni_mtx_lock(&eq->eq_mtx);
 
-	nni_list_node_remove(&aio->a_expire_node);
+	// nni_list_node_remove(&aio->a_expire_node);
+	nni_aio_expire_rm(eq, aio);
+
 	aio->a_result     = rv;
 	aio->a_count      = count;
 	aio->a_cancel_fn  = NULL;
@@ -521,6 +548,7 @@ nni_aio_list_active(nni_aio *aio)
 static void
 nni_aio_expire_add(nni_aio *aio)
 {
+	/*
 	nni_list *list = &aio->a_expire_q->eq_list;
 	nni_aio * prev;
 
@@ -539,16 +567,34 @@ nni_aio_expire_add(nni_aio *aio)
 		// And, as we are the latest, kick the thing.
 		nni_cv_wake(&aio->a_expire_q->eq_cv);
 	}
+	*/
+
+	struct nni_aio_expire_q * eq = aio->a_expire_q;
+	if (eq->eq_len > eq->eq_sz * 2 / 3) {
+		nni_aio ** new_list = nni_zalloc(eq->eq_sz * 2);
+		for (uint32_t i=0; i<eq->eq_len; i++) {
+			new_list[i] = eq->eq_list[i];
+		}
+		nni_free(eq->eq_list, eq->eq_sz);
+		eq->eq_list = new_list;
+		eq->eq_sz *= 2;
+		fprintf(stderr, "expire_q [%d/%d]", eq->eq_len, eq->eq_sz);
+	}
+	eq->eq_list[eq->eq_len ++] = aio;
+	if (eq->eq_len == 1) {
+		nni_cv_wake(&eq->eq_cv);
+	}
 }
 
 static void
 nni_aio_expire_loop(void *arg)
 {
 	nni_aio_expire_q *q    = arg;
-	nni_list *        list = &q->eq_list;
+	nni_aio **        list = q->eq_list;
 	nni_mtx *         mtx  = &q->eq_mtx;
 	nni_cv *          cv   = &q->eq_cv;
 	nni_time          now;
+	int aio_index = 0;
 
 	nni_thr_set_name(NULL, "nng:aio:expire");
 
@@ -559,7 +605,8 @@ nni_aio_expire_loop(void *arg)
 		nni_aio *aio;
 		int      rv;
 
-		if ((aio = nni_list_first(list)) == NULL) {
+		// if ((aio = nni_list_first(list)) == NULL) {
+		if (q->eq_len == 0) {
 
 			if (q->eq_exit) {
 				nni_mtx_unlock(mtx);
@@ -572,6 +619,15 @@ nni_aio_expire_loop(void *arg)
 			continue;
 		}
 
+		// Find the timer with min expire time.
+		aio = list[0];
+		for (uint32_t i=0; i<q->eq_len; i++) {
+			if (list[i]->a_expire < aio->a_expire) {
+				aio = list[i];
+				aio_index = i;
+			}
+		}
+
 		if (now < aio->a_expire) {
 			// Unexpired; the list is ordered, so we just wait.
 			nni_cv_until(cv, aio->a_expire);
@@ -581,7 +637,12 @@ nni_aio_expire_loop(void *arg)
 
 		// The time has come for this aio.  Expire it, canceling any
 		// outstanding I/O.
-		nni_list_remove(list, aio);
+		// nni_list_remove(list, aio);
+		for (uint32_t i=aio_index+1; i<q->eq_len; i++) {
+			list[i-1] = list[i];
+		}
+		q->eq_len --;
+		
 		rv = aio->a_expire_ok ? 0 : NNG_ETIMEDOUT;
 
 		nni_aio_cancel_fn cancel_fn  = aio->a_cancel_fn;
@@ -688,7 +749,8 @@ nni_sleep_cancel(nng_aio *aio, void *arg, int rv)
 	}
 
 	aio->a_sleep = false;
-	nni_list_node_remove(&aio->a_expire_node);
+	// nni_list_node_remove(&aio->a_expire_node);
+	nni_aio_expire_rm(eq, aio);
 	nni_mtx_unlock(&eq->eq_mtx);
 
 	nni_aio_finish_error(aio, rv);
@@ -736,6 +798,7 @@ nni_aio_expire_q_free(nni_aio_expire_q *eq)
 		nni_mtx_unlock(&eq->eq_mtx);
 	}
 
+	nni_free(eq->eq_list, eq->eq_sz);
 	nni_thr_fini(&eq->eq_thr);
 	nni_cv_fini(&eq->eq_cv);
 	nni_mtx_fini(&eq->eq_mtx);
@@ -752,7 +815,10 @@ nni_aio_expire_q_alloc(void)
 	}
 	nni_mtx_init(&eq->eq_mtx);
 	nni_cv_init(&eq->eq_cv, &eq->eq_mtx);
-	NNI_LIST_INIT(&eq->eq_list, nni_aio, a_expire_node);
+	// NNI_LIST_INIT(&eq->eq_list, nni_aio, a_expire_node);
+	eq->eq_sz = 1024;
+	eq->eq_len = 0;
+	eq->eq_list = nni_zalloc(eq->eq_sz * sizeof(nni_aio *));
 	eq->eq_exit = false;
 
 	if (nni_thr_init(&eq->eq_thr, nni_aio_expire_loop, eq) != 0) {
