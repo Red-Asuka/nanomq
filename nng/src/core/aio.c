@@ -237,12 +237,12 @@ static void nni_aio_expire_rm(nni_aio_expire_q * eq, nni_aio * aio)
 	uint32_t aio_index = 0;
 	for (aio_index=0; aio_index < eq->eq_len; aio_index ++) {
 		if (aio == eq->eq_list[aio_index]) {
+			for (uint32_t i=aio_index+1; i<eq->eq_len; i++) {
+				eq->eq_list[i-1] = eq->eq_list[i];
+			}
 			eq->eq_len --;
 			break;
 		}
-	}
-	for (uint32_t i=aio_index+1; i<eq->eq_len; i++) {
-		eq->eq_list[i-1] = eq->eq_list[i];
 	}
 }
 
@@ -571,7 +571,7 @@ nni_aio_expire_add(nni_aio *aio)
 
 	struct nni_aio_expire_q * eq = aio->a_expire_q;
 	if (eq->eq_len > eq->eq_sz * 2 / 3) {
-		nni_aio ** new_list = nni_zalloc(eq->eq_sz * 2);
+		nni_aio ** new_list = nni_zalloc(eq->eq_sz * 2 * sizeof(nni_aio *));
 		for (uint32_t i=0; i<eq->eq_len; i++) {
 			new_list[i] = eq->eq_list[i];
 		}
@@ -642,7 +642,7 @@ nni_aio_expire_loop(void *arg)
 			list[i-1] = list[i];
 		}
 		q->eq_len --;
-		
+
 		rv = aio->a_expire_ok ? 0 : NNG_ETIMEDOUT;
 
 		nni_aio_cancel_fn cancel_fn  = aio->a_cancel_fn;
