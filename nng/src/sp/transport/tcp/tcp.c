@@ -715,10 +715,10 @@ tcptran_pipe_recv_cb(void *arg)
 		iov.iov_len = 4;
 		iov.iov_buf = &p->txlen;
 		// send it down...
-		nng_aio_wait(p->qsaio2);
-		nni_aio_set_iov(p->qsaio2, 1, &iov);
+		nng_aio_wait(qsaio);
+		nni_aio_set_iov(qsaio, 1, &iov);
 		p->cmd = CMD_PUBCOMP;
-		nng_stream_send(p->conn, p->qsaio2);
+		nng_stream_send(p->conn, qsaio);
 	} else if (type == CMD_PUBACK || type == CMD_PUBCOMP) {
 		uint8_t  *		ptr;
 		uint16_t 		ackid;
