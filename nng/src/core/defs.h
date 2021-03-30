@@ -208,6 +208,8 @@ typedef struct conn_propt nano_conn_propt;
 	#define NNI_NANO_MAX_PUB_CLIENT 256
 #endif
 
+#define NANO_MIN_QOS_PACKET_SIZE 4
+
 // NNI_MAX_MAX_TTL is the maximum value that MAX_TTL can be set to -
 // i.e. the number of nng_device boundaries that a message can traverse.
 // This value drives the size of pre-allocated headers and back-trace

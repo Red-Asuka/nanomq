@@ -407,7 +407,7 @@ int32_t conn_handler(uint8_t *packet, conn_param *cparam)
 		}
 	}
 	debug_msg("pos after property: [%d]", pos);
-	//payload client_id
+	//payload client_id TODO check duplicates
 	cparam->clientid.body = (char *)copy_utf8_str(packet, &pos, &len_of_str);
 	rv = rv | len_of_str;
 	cparam->clientid.len = len_of_str;
